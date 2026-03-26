@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>File Cleaner</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- SIDEBAR OVERLAY (mobile) -->
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <div class="app-icon">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <rect x="2" y="2" width="7" height="7" rx="2" fill="currentColor" opacity="0.9"/>
+                <rect x="11" y="2" width="7" height="7" rx="2" fill="currentColor" opacity="0.6"/>
+                <rect x="2" y="11" width="7" height="7" rx="2" fill="currentColor" opacity="0.6"/>
+                <rect x="11" y="11" width="7" height="7" rx="2" fill="currentColor" opacity="0.3"/>
+            </svg>
+        </div>
+        <span class="app-name">File Cleaner</span>
+        <button class="sidebar-close" onclick="closeSidebar()" aria-label="Close sidebar">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+    </div>
+
+    <div class="load-btn-row">
+        <button class="load-btn load-btn-half" onclick="loadFiles(false)">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 3.5h10M2 6.5h6M2 9.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Files
+        </button>
+        <button class="load-btn load-btn-half load-btn-secondary" onclick="loadFiles(true)">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 4.5h12M3 4.5V3a1 1 0 011-1h2l1.5 1.5H10a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Folder
+        </button>
+    </div>
+
+    <div class="section-label">Lists</div>
+    <ul class="folder-list list-section">
+        <li class="folder-item folder-list-item active" data-folder="queue" onclick="switchFolder('queue')">
+            <span class="folder-icon queue-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 4h12M1 7h8M1 10h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </span>
+            <span class="folder-label">Queue</span>
+            <span class="folder-badge" id="count-queue">0</span>
+        </li>
+        <li class="folder-item folder-list-item" data-folder="skipped" onclick="switchFolder('skipped')">
+            <span class="folder-icon skipped-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M4 6l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 12h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </span>
+            <span class="folder-label">Skipped</span>
+            <span class="folder-badge" id="count-skipped">0</span>
+        </li>
+        <li class="folder-item folder-list-item" data-folder="trash" onclick="switchFolder('trash')">
+            <span class="folder-icon trash-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6.5v4M8.5 6.5v4M3 4l.5 7.5a1 1 0 001 .5h5a1 1 0 001-.5L11 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <span class="folder-label">Trash</span>
+            <span class="folder-badge" id="count-trash">0</span>
+        </li>
+    </ul>
+
+    <div class="section-label" style="margin-top:4px;">
+        Folders
+    </div>
+    <ul id="folderList" class="folder-list">
+        <li class="folder-item" data-folder="documents" data-preset="1" onclick="switchFolder('documents')">
+            <span class="folder-icon documents-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 2h6l3 3v7a1 1 0 01-1 1h-8a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8.5 2v3H11.5" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+            </span>
+            <span class="folder-label">Documents</span>
+            <span class="folder-badge" id="count-documents">0</span>
+            <button class="folder-del-btn" title="Remove folder" onclick="event.stopPropagation();deletePresetFolder('documents')">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 2l6 6M8 2L2 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </button>
+        </li>
+        <li class="folder-item" data-folder="music" data-preset="1" onclick="switchFolder('music')">
+            <span class="folder-icon music-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 10V3l7-1.5V9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="3.5" cy="10.5" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="10.5" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.3"/></svg>
+            </span>
+            <span class="folder-label">Music</span>
+            <span class="folder-badge" id="count-music">0</span>
+            <button class="folder-del-btn" title="Remove folder" onclick="event.stopPropagation();deletePresetFolder('music')">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 2l6 6M8 2L2 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </button>
+        </li>
+        <li class="folder-item" data-folder="pictures" data-preset="1" onclick="switchFolder('pictures')">
+            <span class="folder-icon pictures-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="2.5" width="12" height="9" rx="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="4.5" cy="5.5" r="1" fill="currentColor"/><path d="M1 9l3-2.5 2.5 2 2.5-3L13 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <span class="folder-label">Pictures</span>
+            <span class="folder-badge" id="count-pictures">0</span>
+            <button class="folder-del-btn" title="Remove folder" onclick="event.stopPropagation();deletePresetFolder('pictures')">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 2l6 6M8 2L2 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </button>
+        </li>
+        <li class="folder-item" data-folder="videos" data-preset="1" onclick="switchFolder('videos')">
+            <span class="folder-icon videos-icon">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="9" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M10 5.5l3-1.5v5L10 7.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <span class="folder-label">Videos</span>
+            <span class="folder-badge" id="count-videos">0</span>
+            <button class="folder-del-btn" title="Remove folder" onclick="event.stopPropagation();deletePresetFolder('videos')">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 2l6 6M8 2L2 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </button>
+        </li>
+    </ul>
+
+    <button class="add-folder-btn" onclick="showAddFolderModal()">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        New Folder
+    </button>
+
+    <div class="sidebar-bottom">
+        <button class="action-btn org-btn" onclick="showOrganizerMenu()">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="2" width="11" height="2.5" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="1" y="5.5" width="8" height="2.5" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="1" y="9" width="9.5" height="2.5" rx="1" stroke="currentColor" stroke-width="1.2"/></svg>
+            Organizer
+        </button>
+        <button class="action-btn" onclick="renderDuplicateDetectorPanel()">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="3" width="7" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2"/><rect x="5" y="2" width="7" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2" opacity=".6"/></svg>
+            Duplicates
+        </button>
+        <div class="live-export-status" id="liveExportStatus" style="display:none;"></div>
+        <button class="action-btn export-panel-btn" id="exportBtn" onclick="showExportPanel()">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="7" width="11" height="5" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M6.5 1v6M4 4l2.5 3L9 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Export
+        </button>
+        <button class="action-btn" onclick="window.open('thumbnailer-stress-test.html','_blank')" title="Thumbnailer Stress Test">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 6.5l1.5 1.5 2.5-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Stress Test
+        </button>
+        <button class="action-btn danger" id="permTrashBtn" onclick="confirmPermDelete()" disabled>
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M1.5 3.5h10M4.5 3.5V2h4v1.5M4.5 6v4M8.5 6v4M2.5 3.5l.5 7a1 1 0 001 .5h5a1 1 0 001-.5l.5-7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Empty Trash
+        </button>
+    </div>
+</aside>
+
+<!-- MAIN -->
+<div class="app-shell">
+    <!-- TOP BAR -->
+    <header class="topbar">
+        <button class="menu-btn" onclick="openSidebar()" aria-label="Open sidebar">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 5h12M3 9h12M3 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+        <div class="topbar-title" id="topbarTitle">Queue</div>
+        <div class="topbar-meta" id="topbarMeta"></div>
+    </header>
+
+    <!-- CONTENT -->
+    <main class="main-area" id="mainArea">
+        <div class="empty-state">
+            <div class="empty-illustration">
+                <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                    <rect x="8" y="16" width="48" height="38" rx="6" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1.5"/>
+                    <path d="M20 16v-4a2 2 0 012-2h8l4 4H42a2 2 0 012 2v0" stroke="var(--border)" stroke-width="1.5" stroke-linecap="round"/>
+                    <circle cx="32" cy="35" r="8" fill="var(--surface-3)" stroke="var(--border)" stroke-width="1.5"/>
+                    <path d="M32 31v4l2.5 2.5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <h2>No Files Loaded</h2>
+            <p>Tap "Load Files" to get started</p>
+            <button class="load-btn-inline" onclick="loadFiles(false)">Load Files</button>
+        </div>
+    </main>
+</div>
+
+<!-- FOLDER PICKER PANEL -->
+<div class="folder-picker-backdrop" id="folderPickerBackdrop" onclick="cancelFolderPick()"></div>
+<div class="folder-picker-panel" id="folderPickerPanel">
+    <div class="folder-picker-header">
+        <div class="folder-picker-file-info" id="folderPickerFileInfo"></div>
+        <button class="folder-picker-cancel" onclick="cancelFolderPick()">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+    </div>
+    <div class="folder-picker-label">Move to folder</div>
+    <ul class="folder-picker-list" id="folderPickerList"></ul>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- MODAL: add folder -->
+<div class="modal-overlay" id="addFolderModal">
+    <div class="modal-box">
+        <div class="modal-icon">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M3 8V18a1 1 0 001 1h14a1 1 0 001-1V8M3 8V6a1 1 0 011-1h5l2 2h7a1 1 0 011 1v0" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 12v4M9 14h4" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </div>
+        <h3>New Folder</h3>
+        <input class="modal-input" id="folderNameInput" placeholder="Folder name" onkeydown="if(event.key==='Enter') createFolder(); if(event.key==='Escape') closeAddFolderModal();">
+        <div class="modal-actions">
+            <button class="modal-btn secondary" onclick="closeAddFolderModal()">Cancel</button>
+            <button class="modal-btn primary" onclick="createFolder()">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: confirm perm delete -->
+<div class="modal-overlay" id="permDeleteModal">
+    <div class="modal-box">
+        <div class="modal-icon danger-icon">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M3 6h16M8 6V4a1 1 0 011-1h4a1 1 0 011 1v2M9 10v6M13 10v6M5 6l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13" stroke="var(--danger)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h3>Delete Permanently?</h3>
+        <p id="permDeleteMsg"></p>
+        <div class="modal-actions">
+            <button class="modal-btn secondary" onclick="closePermDeleteModal()">Cancel</button>
+            <button class="modal-btn danger" onclick="doPermDelete()">Delete</button>
+        </div>
+    </div>
+</div>
+
+<!-- LIGHTBOX -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox(event)">
+    <div class="lightbox-topbar">
+        <div class="lightbox-name" id="lightboxName"></div>
+        <button class="lightbox-close" onclick="closeLightboxBtn()">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+    </div>
+    <button class="lb-nav-btn lb-prev" id="lbPrevBtn" onclick="event.stopPropagation();lightboxNav(-1)" style="display:none">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M11 4L6 9l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="lightbox-content" id="lightboxContent"></div>
+    <button class="lb-nav-btn lb-next" id="lbNextBtn" onclick="event.stopPropagation();lightboxNav(1)" style="display:none">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M7 4l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="lb-action-bar" onclick="event.stopPropagation()">
+        <input class="lb-rename-input" id="lbRenameInput" placeholder="Filename" onkeydown="if(event.key==='Enter') lbRenameFile()">
+        <button class="lb-action-btn lb-rename-btn" onclick="lbRenameFile()">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M9 2l2 2-7 7H2v-2L9 2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+            Rename
+        </button>
+        <button class="lb-action-btn lb-move-btn-el" id="lbMoveBtn" onclick="lbMoveFile()">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 7V10a1 1 0 001 1h7a1 1 0 001-1V7M6.5 2v6M4.5 4.5L6.5 2 8.5 4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Move
+        </button>
+    </div>
+</div>
+
+<div class="grain-overlay"></div>
+<script src="thumbnail-engine.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

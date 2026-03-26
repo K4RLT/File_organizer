@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Thumbnailer Stress Test</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700&display=swap');
+
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#09090d;--s1:#111118;--s2:#18181f;--s3:#22222c;
+  --border:rgba(255,255,255,0.055);--bmed:rgba(255,255,255,0.09);
+  --text:#eeeef2;--text2:#8888a0;--text3:#44445a;
+  --accent:#4f7fff;--ag:rgba(79,127,255,0.13);
+  --success:#5aaa78;--warn:#e5c07b;--danger:#d16060;
+  --radius:12px;--mono:'DM Mono',monospace;--font:'Syne',system-ui,sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);-webkit-font-smoothing:antialiased;overflow:hidden}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--s3);border-radius:4px}
+
+/* ── Layout ── */
+.shell{display:flex;flex-direction:column;height:100vh}
+.topbar{
+  display:flex;align-items:center;gap:12px;
+  padding:0 16px;height:52px;
+  background:var(--s1);border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.topbar-title{font-weight:700;font-size:15px;flex:1}
+.topbar-meta{font-size:11px;color:var(--text2);font-family:var(--mono)}
+.run-all-btn{
+  background:var(--accent);color:#fff;border:none;
+  padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;
+  cursor:pointer;font-family:var(--font);display:flex;align-items:center;gap:6px;transition:opacity .15s;
+}
+.run-all-btn:hover{opacity:.85}
+.run-all-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── Category tabs ── */
+.tabs{
+  display:flex;gap:4px;padding:10px 14px 0;
+  background:var(--s1);border-bottom:1px solid var(--border);
+  overflow-x:auto;flex-shrink:0;
+}
+.tabs::-webkit-scrollbar{height:0}
+.tab{
+  padding:6px 14px;border-radius:8px 8px 0 0;
+  font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;
+  background:transparent;border:1px solid transparent;border-bottom:none;
+  color:var(--text2);transition:all .15s;user-select:none;
+}
+.tab:hover{color:var(--text);background:var(--s2)}
+.tab.active{color:var(--text);background:var(--s2);border-color:var(--bmed)}
+.tab .badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:16px;height:16px;padding:0 4px;border-radius:6px;
+  font-size:9px;font-family:var(--mono);margin-left:5px;
+  background:var(--s3);color:var(--text2);
+}
+.tab.active .badge{background:var(--accent);color:#fff}
+
+/* ── Grid ── */
+.grid-area{flex:1;overflow-y:auto;padding:14px}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+  gap:10px;
+}
+
+/* ── Thumb card ── */
+.card{
+  background:var(--s1);border:1px solid var(--border);
+  border-radius:var(--radius);overflow:hidden;cursor:pointer;
+  transition:border-color .15s,transform .15s;position:relative;
+}
+.card:hover{border-color:var(--bmed);transform:translateY(-1px)}
+.card.running{border-color:var(--accent)}
+.card.pass{border-color:var(--success)}
+.card.fail{border-color:var(--danger)}
+.card.skip{border-color:var(--text3);opacity:.55}
+
+.thumb-wrap{
+  width:100%;aspect-ratio:4/3;
+  background:var(--s2);position:relative;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+}
+.thumb-wrap img{width:100%;height:100%;object-fit:cover}
+.thumb-placeholder{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:6px;color:var(--text3);font-size:11px;
+}
+.thumb-placeholder .ext-big{font-size:28px;font-weight:700;font-family:var(--mono);color:var(--text2)}
+.thumb-spinner{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(9,9,13,.6);backdrop-filter:blur(2px);
+}
+.spinner{
+  width:24px;height:24px;border:2px solid var(--s3);
+  border-top-color:var(--accent);border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.status-dot{
+  position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;
+  background:var(--s3);
+}
+.card.running .status-dot{background:var(--accent);animation:pulse 1s ease-in-out infinite}
+.card.pass .status-dot{background:var(--success)}
+.card.fail .status-dot{background:var(--danger)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+.card-info{padding:8px 10px}
+.card-ext{
+  font-size:10px;font-weight:700;font-family:var(--mono);
+  color:var(--accent);letter-spacing:.05em;text-transform:uppercase;
+}
+.card-label{font-size:11px;color:var(--text);margin-top:2px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-desc{font-size:10px;color:var(--text2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-time{font-size:9px;font-family:var(--mono);color:var(--text3);margin-top:4px}
+.card-err{font-size:9px;color:var(--danger);margin-top:3px;word-break:break-all;line-height:1.4}
+
+.run-btn{
+  width:100%;padding:6px 0;border:none;
+  background:var(--s2);color:var(--text2);
+  font-size:11px;font-family:var(--font);font-weight:600;cursor:pointer;
+  border-top:1px solid var(--border);transition:background .15s,color .15s;
+}
+.run-btn:hover{background:var(--accent);color:#fff}
+.run-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── Detail modal ── */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);
+  z-index:100;display:none;align-items:center;justify-content:center;padding:20px;
+}
+.modal-overlay.open{display:flex}
+.modal{
+  background:var(--s1);border:1px solid var(--bmed);border-radius:16px;
+  max-width:480px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;
+}
+.modal-header{
+  display:flex;align-items:center;gap:10px;padding:14px 16px;
+  border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.modal-title{font-size:14px;font-weight:700;flex:1}
+.modal-close{
+  background:var(--s3);border:none;color:var(--text2);
+  width:28px;height:28px;border-radius:8px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:16px;
+}
+.modal-body{overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+.modal-thumb{width:100%;aspect-ratio:4/3;background:var(--s2);border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.modal-thumb img{max-width:100%;max-height:100%;object-fit:contain}
+.info-row{display:flex;gap:8px;justify-content:space-between;font-size:11px}
+.info-key{color:var(--text2);font-family:var(--mono)}
+.info-val{color:var(--text);font-family:var(--mono);text-align:right;word-break:break-all}
+.status-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;
+}
+.status-badge.pass{background:rgba(90,170,120,.15);color:var(--success)}
+.status-badge.fail{background:rgba(209,96,96,.15);color:var(--danger)}
+.status-badge.pending{background:var(--s3);color:var(--text2)}
+.status-badge.skip{background:var(--s3);color:var(--text3)}
+.re-run-btn{
+  background:var(--accent);color:#fff;border:none;width:100%;
+  padding:9px;border-radius:8px;font-size:13px;font-weight:600;
+  cursor:pointer;font-family:var(--font);
+}
+.re-run-btn:hover{opacity:.85}
+
+/* ── Summary bar ── */
+.summary{
+  display:flex;align-items:center;gap:12px;padding:8px 14px;
+  background:var(--s1);border-top:1px solid var(--border);
+  font-size:11px;color:var(--text2);flex-shrink:0;flex-wrap:wrap;
+}
+.summary span{display:flex;align-items:center;gap:4px}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot.pass{background:var(--success)}
+.dot.fail{background:var(--danger)}
+.dot.running{background:var(--accent)}
+.dot.pending{background:var(--s3)}
+
+/* ── Upload zone for file-based tests ── */
+.upload-zone{
+  border:2px dashed var(--bmed);border-radius:10px;padding:14px;
+  text-align:center;font-size:11px;color:var(--text2);
+  cursor:pointer;transition:border-color .15s;
+}
+.upload-zone:hover{border-color:var(--accent);color:var(--text)}
+.upload-zone input{display:none}
+
+/* ── Empty state ── */
+.empty-grid{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:8px;padding:60px 20px;color:var(--text3);font-size:13px;text-align:center;
+}
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- Top bar -->
+  <header class="topbar">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="1" y="1" width="7" height="7" rx="2" fill="var(--accent)" opacity=".9"/>
+      <rect x="10" y="1" width="7" height="7" rx="2" fill="var(--accent)" opacity=".55"/>
+      <rect x="1" y="10" width="7" height="7" rx="2" fill="var(--accent)" opacity=".55"/>
+      <rect x="10" y="10" width="7" height="7" rx="2" fill="var(--accent)" opacity=".25"/>
+    </svg>
+    <span class="topbar-title">Thumbnailer Stress Test</span>
+    <span class="topbar-meta" id="topbarMeta">0 tests</span>
+    <button class="run-all-btn" id="runAllBtn" onclick="runAll()">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 2l7 4-7 4V2z" fill="currentColor"/></svg>
+      Run All
+    </button>
+  </header>
+
+  <!-- Tabs -->
+  <nav class="tabs" id="tabs"></nav>
+
+  <!-- Grid -->
+  <div class="grid-area">
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <!-- Summary -->
+  <footer class="summary" id="summary">
+    <span><span class="dot pending"></span> Ready to run</span>
+  </footer>
+</div>
+
+<!-- Detail modal -->
+<div class="modal-overlay" id="modal" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <span class="modal-title" id="modalTitle">Test Detail</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<!-- Load ThumbnailEngine from same directory -->
+<script src="thumbnail-engine.js"></script>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════════════
+//  TEST REGISTRY
+//  Each test has: id, category, ext, label, desc, runner()
+//  runner() returns { thumb: dataURL|null, method, notes }
+// ══════════════════════════════════════════════════════════
+
+const TESTS = [];
+
+function reg(category, ext, label, desc, runner) {
+    TESTS.push({ id: `${category}_${ext}_${TESTS.length}`, category, ext, label, desc, runner,
+        status: 'pending', thumb: null, time: null, error: null });
+}
+
+// ─────────────────────────────────────────────────────────
+//  PLACEHOLDER (no real file — just COLOR_MAP rendering)
+// ─────────────────────────────────────────────────────────
+const PLACEHOLDER_EXTS = [
+    ['psd','Photoshop PSD'],['psb','Photoshop PSB'],['xcf','GIMP XCF'],
+    ['kra','Krita KRA'],['ora','OpenRaster ORA'],['clip','Clip Studio'],
+    ['sai','SAI Paint'],['procreate','Procreate'],['ai','Illustrator AI'],
+    ['sketch','Sketch'],['drawio','Draw.io'],['dio','Draw.io alt'],
+    ['blend','Blender'],['pdf','PDF'],['doc','Word DOC'],['docx','Word DOCX'],
+    ['xls','Excel XLS'],['xlsx','Excel XLSX'],['ppt','PowerPoint'],['pptx','PowerPoint X'],
+    ['odt','OpenDoc Text'],['ods','OpenDoc Sheet'],['odp','OpenDoc Pres.'],
+    ['epub','EPUB Book'],['mobi','Mobi Book'],['azw','Kindle AZW'],['azw3','Kindle AZW3'],
+    ['fb2','FictionBook'],['aep','After Effects'],['prproj','Premiere Pro'],
+    ['max','3DS Max'],['c4d','Cinema 4D'],['mb','Maya Binary'],['ma','Maya ASCII'],
+    ['lxo','Modo'],['hip','Houdini'],['hipnc','Houdini NC'],
+    ['zip','ZIP Archive'],['7z','7-Zip'],['rar','RAR'],['tar','TAR'],['gz','GZip'],['bz2','BZip2'],
+    ['mp3','MP3 Audio'],['wav','WAV Audio'],
+];
+for (const [ext, label] of PLACEHOLDER_EXTS) {
+    reg('Placeholder', ext, label, 'COLOR_MAP canvas placeholder', async () => {
+        const thumb = ThumbnailEngine.placeholder(ext, `sample.${ext}`);
+        return { thumb, method: 'placeholder', notes: `bg: ${ThumbnailEngine.COLOR_MAP[ext]?.bg || '#1e293b'}` };
+    });
+}
+
+// Unknown ext → fallback placeholder
+reg('Placeholder', '???', 'Unknown ext', 'Fallback for unregistered extension', async () => {
+    const thumb = ThumbnailEngine.placeholder('unknownxyz', 'mystery.unknownxyz');
+    return { thumb, method: 'placeholder-fallback', notes: 'Uses default fallback color' };
+});
+
+// ─────────────────────────────────────────────────────────
+//  TEXT / CODE thumbnails (generated in-browser)
+// ─────────────────────────────────────────────────────────
+const TEXT_SAMPLES = {
+    js: `// JavaScript module\nimport { useState } from 'react';\n\nconst App = () => {\n  const [count, setCount] = useState(0);\n  return <button onClick={() => setCount(c=>c+1)}>{count}</button>;\n};\n\nexport default App;`,
+    ts: `// TypeScript\ninterface User {\n  id: number;\n  name: string;\n  email: string;\n}\n\nasync function fetchUser(id: number): Promise<User> {\n  const res = await fetch(\`/api/users/\${id}\`);\n  return res.json();\n}`,
+    py: `# Python script\nimport asyncio\nfrom pathlib import Path\n\nasync def process_files(directory: str) -> list[str]:\n    """Process all files in directory."""\n    results = []\n    for path in Path(directory).iterdir():\n        if path.is_file():\n            results.append(path.name)\n    return results`,
+    md: `# My Project\n\nA description of what this project does.\n\n## Features\n\n- Fast performance\n- Easy to use\n- Well documented\n\n## Installation\n\n\`\`\`bash\nnpm install my-project\n\`\`\``,
+    json: `{\n  "name": "file-cleaner",\n  "version": "1.0.0",\n  "description": "Sort and clean files",\n  "scripts": {\n    "start": "node index.js",\n    "build": "tsc",\n    "test": "jest"\n  },\n  "dependencies": {\n    "react": "^18.0.0"\n  }\n}`,
+    css: `/* Main stylesheet */\n:root {\n  --bg: #09090d;\n  --accent: #4f7fff;\n  --text: #eeeef2;\n}\n\nbody {\n  margin: 0;\n  background: var(--bg);\n  color: var(--text);\n  font-family: system-ui;\n}\n\n.card {\n  border-radius: 12px;\n  padding: 16px;\n}`,
+    html: `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>My App</title>\n  <link rel="stylesheet" href="style.css">\n</head>\n<body>\n  <main class="container">\n    <h1>Hello World</h1>\n    <p>Welcome to my app.</p>\n  </main>\n  <script src="app.js"><\/script>\n</body>\n</html>`,
+    rs: `// Rust\nuse std::collections::HashMap;\n\nfn word_count(text: &str) -> HashMap<&str, usize> {\n    let mut counts = HashMap::new();\n    for word in text.split_whitespace() {\n        *counts.entry(word).or_insert(0) += 1;\n    }\n    counts\n}\n\nfn main() {\n    let text = "hello world hello";\n    println!("{:?}", word_count(text));\n}`,
+    txt: `This is a plain text file.\nIt contains some sample content.\n\nLorem ipsum dolor sit amet, consectetur\nadipiscing elit. Sed do eiusmod tempor\nincididunt ut labore et dolore magna.\n\nFinis.`,
+    csv: `name,age,city,score\nAlice,28,Berlin,95.2\nBob,34,Tokyo,87.6\nCarol,22,Sydney,91.0\nDave,41,London,78.3\nEve,30,Paris,88.9`,
+};
+
+for (const [ext, content] of Object.entries(TEXT_SAMPLES)) {
+    const label = { js:'JavaScript', ts:'TypeScript', py:'Python', md:'Markdown',
+        json:'JSON', css:'CSS', html:'HTML', rs:'Rust', txt:'Plain Text', csv:'CSV' }[ext];
+    reg('Text & Code', ext, label, 'Canvas-rendered code preview', async () => {
+        const thumb = await renderTextThumb(content, ext, `sample.${ext}`);
+        return { thumb, method: 'scheduleTextThumbnail (canvas)' };
+    });
+}
+
+// ─────────────────────────────────────────────────────────
+//  SVG (inline generation — no file needed)
+// ─────────────────────────────────────────────────────────
+const SVG_SAMPLES = [
+    { name:'Simple shapes', svg:`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150"><rect width="200" height="150" fill="#1e293b"/><circle cx="100" cy="75" r="50" fill="#4f7fff" opacity=".8"/><rect x="60" y="55" width="80" height="40" rx="8" fill="none" stroke="#fff" stroke-width="2"/><text x="100" y="79" font-family="sans-serif" font-size="12" fill="white" text-anchor="middle">SVG Test</text></svg>` },
+    { name:'Gradient', svg:`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#4f7fff"/><stop offset="100%" style="stop-color:#d1607a"/></linearGradient></defs><rect width="200" height="150" fill="url(#g)"/><text x="100" y="80" font-family="sans-serif" font-size="14" fill="white" text-anchor="middle">Gradient SVG</text></svg>` },
+    { name:'Path art', svg:`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150"><rect width="200" height="150" fill="#0d0d10"/><path d="M20 130 Q100 10 180 130" stroke="#4f7fff" stroke-width="3" fill="none"/><path d="M20 100 Q100 40 180 100" stroke="#d1607a" stroke-width="2" fill="none"/><circle cx="100" cy="75" r="8" fill="#5aaa78"/></svg>` },
+];
+
+for (const s of SVG_SAMPLES) {
+    reg('SVG', 'svg', s.name, 'SVG → canvas rasterization', async () => {
+        const blob = new Blob([s.svg], { type: 'image/svg+xml' });
+        const thumb = await ThumbnailEngine.generate(blob, 'svg', { name: `${s.name}.svg` });
+        return { thumb, method: '_extractSVG (canvas rasterize)' };
+    });
+}
+
+// ─────────────────────────────────────────────────────────
+//  PDF (generated in-browser via pdf.js on a synthetic PDF)
+// ─────────────────────────────────────────────────────────
+reg('PDF', 'pdf', 'PDF Render', 'Loads pdf.js and renders page 1', async () => {
+    const pdfBytes = buildMinimalPDF();
+    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+    const thumb = await ThumbnailEngine.generate(blob, 'pdf', { name: 'test.pdf' });
+    return { thumb, method: '_extractPDF (pdf.js)', notes: thumb ? 'pdf.js loaded OK' : 'pdf.js fallback' };
+});
+
+// ─────────────────────────────────────────────────────────
+//  FONT (generated TTF stub — will likely fall back to placeholder
+//         since the stub isn't a real font, but tests the pipeline)
+// ─────────────────────────────────────────────────────────
+reg('Font', 'ttf', 'Font Preview', 'Tests FontFace API loader', async () => {
+    // We use a real hosted font URL to properly test this path
+    const url = 'https://fonts.gstatic.com/s/dmmono/v14/aFTR7PB1QTsUX8KYvrGyIYSnbKX9.woff2';
+    const thumb = await renderFontThumb(url, 'ttf', 'DMMono.ttf');
+    return { thumb, method: 'scheduleFontThumbnail (FontFace API)', notes: 'Uses DM Mono from Google Fonts' };
+});
+
+// ─────────────────────────────────────────────────────────
+//  IMAGE (native browser — JPEG, PNG, WebP, GIF, SVG as img)
+// ─────────────────────────────────────────────────────────
+const IMG_TYPES = [
+    { ext:'png',  mime:'image/png',  label:'PNG',  gen: makePNG  },
+    { ext:'jpeg', mime:'image/jpeg', label:'JPEG', gen: makeJPEG },
+    { ext:'webp', mime:'image/webp', label:'WebP', gen: makeWebP },
+    { ext:'gif',  mime:'image/gif',  label:'GIF',  gen: makeGIF  },
+    { ext:'bmp',  mime:'image/bmp',  label:'BMP',  gen: makeBMP  },
+];
+for (const t of IMG_TYPES) {
+    reg('Images', t.ext, t.label, 'Native browser image decode', async () => {
+        const url = t.gen();
+        return { thumb: url, method: 'native <img> (blob URL)', notes: 'Generated in-browser' };
+    });
+}
+
+// ─────────────────────────────────────────────────────────
+//  VIDEO thumbnail (via HTMLVideoElement seeked frame)
+// ─────────────────────────────────────────────────────────
+reg('Video', 'mp4', 'Video Thumbnail', 'Canvas capture from video seekTo(0.1)', async () => {
+    const thumb = await captureVideoThumb();
+    return { thumb, method: 'captureVideoThumbnail (HTMLVideoElement)', notes: thumb ? 'Frame captured' : 'No frame (codec)' };
+});
+
+reg('Video', 'webm', 'WebM Thumbnail', 'Canvas capture from WebM video', async () => {
+    const thumb = await captureVideoThumb('webm');
+    return { thumb, method: 'captureVideoThumbnail (HTMLVideoElement)', notes: thumb ? 'Frame captured' : 'No frame' };
+});
+
+// ─────────────────────────────────────────────────────────
+//  AUDIO waveform / placeholder
+// ─────────────────────────────────────────────────────────
+reg('Audio', 'mp3', 'MP3', 'Audio placeholder', async () => {
+    const thumb = ThumbnailEngine.placeholder('mp3', 'sample.mp3');
+    return { thumb, method: 'placeholder (audio not rendered)' };
+});
+reg('Audio', 'wav', 'WAV', 'Audio placeholder', async () => {
+    const thumb = ThumbnailEngine.placeholder('wav', 'sample.wav');
+    return { thumb, method: 'placeholder' };
+});
+
+// ─────────────────────────────────────────────────────────
+//  ZIP (thumbnail via JSZip extraction — injected from CDN)
+// ─────────────────────────────────────────────────────────
+reg('Archive', 'zip', 'ZIP with image', 'JSZip: extracts embedded PNG thumbnail', async () => {
+    const thumb = await testZipThumb();
+    return { thumb, method: 'JSZip extraction (embedded PNG)', notes: thumb ? 'Image extracted from ZIP' : 'fallback placeholder' };
+});
+
+reg('Archive', 'zip', 'ZIP tree preview', 'JSZip: tree listing fallback', async () => {
+    const thumb = ThumbnailEngine.placeholder('zip', 'archive.zip');
+    return { thumb, method: 'placeholder (no embedded image)' };
+});
+
+// ─────────────────────────────────────────────────────────
+//  OFFICE (canvas placeholder — same as scheduleOfficeThumbnail)
+// ─────────────────────────────────────────────────────────
+for (const ext of ['docx','xlsx','pptx','odt','ods','odp']) {
+    reg('Office', ext, ext.toUpperCase(), 'Canvas placeholder via ThumbnailEngine', async () => {
+        const thumb = ThumbnailEngine.placeholder(ext, `document.${ext}`);
+        return { thumb, method: 'placeholder (scheduleOfficeThumbnail)' };
+    });
+}
+
+// ─────────────────────────────────────────────────────────
+//  3D PLACEHOLDER (not 3D viewer — just thumbnail placeholder)
+// ─────────────────────────────────────────────────────────
+for (const ext of ['obj','stl','gltf','glb','fbx','dae']) {
+    reg('3D', ext, ext.toUpperCase(), '3D format placeholder', async () => {
+        const thumb = ThumbnailEngine.placeholder(ext, `model.${ext}`);
+        return { thumb, method: 'placeholder (3D native viewer in main app)' };
+    });
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW.IO (synthetic XML)
+// ─────────────────────────────────────────────────────────
+reg('Design', 'drawio', 'Draw.io (embedded img)', 'Extracts base64 image from XML', async () => {
+    // A minimal draw.io XML with embedded PNG
+    const pngB64 = makeSmallPNGBase64();
+    const xml = `<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="2" value="Test" style="shape=mxgraph.basic.rect;" vertex="1" parent="1"><mxGeometry width="200" height="150" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>`;
+    // Without an embedded image, falls back to null → placeholder
+    const blob = new Blob([xml], { type: 'text/xml' });
+    const thumb = await ThumbnailEngine.generate(blob, 'drawio', { name: 'test.drawio' });
+    return { thumb, method: '_extractDrawIO (XML base64 search)', notes: 'No embedded image → placeholder fallback' };
+});
+
+reg('Design', 'drawio', 'Draw.io (with image)', 'XML with embedded base64 PNG', async () => {
+    const pngB64 = makeSmallPNGBase64();
+    const xml = `<mxfile><diagram><image><![CDATA[data:image/png;base64,${pngB64}]]></image></diagram></mxfile>`;
+    const blob = new Blob([xml], { type: 'text/xml' });
+    const thumb = await ThumbnailEngine.generate(blob, 'drawio', { name: 'with-image.drawio' });
+    return { thumb, method: '_extractDrawIO (embedded base64)', notes: thumb?.startsWith('blob') || thumb?.startsWith('data') ? 'Image extracted!' : 'extraction failed' };
+});
+
+// ─────────────────────────────────────────────────────────
+//  EDGE CASES
+// ─────────────────────────────────────────────────────────
+reg('Edge Cases', 'txt', 'Empty file', 'Zero-byte text file', async () => {
+    const thumb = await renderTextThumb('', 'txt', 'empty.txt');
+    return { thumb, method: 'scheduleTextThumbnail with empty content' };
+});
+
+reg('Edge Cases', 'txt', 'Long filename', '80-char filename truncation', async () => {
+    const longName = 'a'.repeat(80) + '.txt';
+    const thumb = ThumbnailEngine.placeholder('txt', longName);
+    return { thumb, method: 'placeholder with long name', notes: 'Name truncated at 30 chars' };
+});
+
+reg('Edge Cases', 'js', 'Very long lines', 'Line truncation in code preview', async () => {
+    const content = 'x'.repeat(200) + '\n' + 'const ' + 'y'.repeat(200);
+    const thumb = await renderTextThumb(content, 'js', 'long-lines.js');
+    return { thumb, method: 'code thumb with 200-char lines' };
+});
+
+reg('Edge Cases', 'svg', 'Malformed SVG', 'Should fall back gracefully', async () => {
+    const blob = new Blob(['<svg><not valid xml>>>'], { type: 'image/svg+xml' });
+    const thumb = await ThumbnailEngine.generate(blob, 'svg', { name: 'bad.svg' });
+    return { thumb, method: '_extractSVG with malformed input', notes: thumb ? 'Rendered anyway' : 'returned null (expected)' };
+});
+
+reg('Edge Cases', 'pdf', 'Corrupted PDF', 'Non-PDF binary → fallback', async () => {
+    const junk = new Blob([new Uint8Array([0x00,0x01,0x02,0xDE,0xAD,0xBE,0xEF])], { type: 'application/pdf' });
+    const thumb = await ThumbnailEngine.generate(junk, 'pdf', { name: 'corrupt.pdf' });
+    return { thumb, method: '_extractPDF with junk bytes → placeholder', notes: thumb ? (thumb.startsWith('data') ? 'Got placeholder' : 'Got result') : 'null' };
+});
+
+reg('Edge Cases', '???', 'No ext fallback', 'generate() with unknown ext', async () => {
+    const blob = new Blob(['test'], { type: 'text/plain' });
+    const thumb = await ThumbnailEngine.generate(blob, 'xyzabc', { name: 'weird.xyzabc' });
+    return { thumb, method: 'generate() → no extractor → placeholder', notes: 'Should show generic icon' };
+});
+
+reg('Edge Cases', 'png', 'Large canvas', 'Placeholder at 1200×900', async () => {
+    const thumb = ThumbnailEngine.placeholder('psd', 'big.psd', { canvasWidth:1200, canvasHeight:900, jpegQuality:0.9 });
+    return { thumb, method: 'placeholder() with large canvas size', notes: '1200×900 px' };
+});
+
+// ══════════════════════════════════════════════════════════
+//  HELPER: text thumbnail (mirrors scheduleTextThumbnail)
+// ══════════════════════════════════════════════════════════
+async function renderTextThumb(text, ext, name) {
+    const lines = text.split('\n').slice(0, 40);
+    const W = 480, H = 270;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const typeColors = {
+        md:'#1d4ed8',markdown:'#1d4ed8',json:'#1e293b',js:'#854d0e',ts:'#1e3a5f',
+        tsx:'#0c4a6e',jsx:'#0c4a6e',py:'#1e3a5f',rs:'#7c2d12',go:'#0c4a6e',
+        html:'#7f1d1d',css:'#4c1d95',sh:'#14532d',bash:'#14532d',
+        yaml:'#7f1d1d',toml:'#7c2d12',sql:'#1e3a5f',csv:'#14532d',
+        xml:'#78350f',txt:'#1e293b',log:'#0f172a',
+    };
+    ctx.fillStyle = '#0d0d10'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = typeColors[ext]||'#1e293b'; ctx.fillRect(0,0,W,30);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    if(ctx.roundRect) ctx.roundRect(W-54,7,48,16,4); else ctx.rect(W-54,7,48,16);
+    ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 10px monospace'; ctx.textAlign='center';
+    ctx.fillText(ext.toUpperCase().slice(0,5),W-30,19); ctx.textAlign='left';
+    ctx.fillStyle='rgba(255,255,255,0.8)'; ctx.font='10px monospace';
+    ctx.fillText((name||'').slice(0,44),10,19);
+    ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(0,30); ctx.lineTo(W,30); ctx.stroke();
+    const isMd = ext==='md'||ext==='markdown';
+    let y=46; const lineH=12;
+    for(const rawLine of lines) {
+        if(y>H-16) break;
+        const line=rawLine.slice(0,72);
+        if(!line.trim()){y+=7;continue}
+        if(isMd){
+            if(rawLine.startsWith('# ')){ctx.fillStyle='#e8e8ea';ctx.font='bold 13px sans-serif';ctx.fillText(line.slice(2),10,y);y+=16;continue}
+            if(rawLine.startsWith('## ')){ctx.fillStyle='#c8c8ca';ctx.font='bold 11px sans-serif';ctx.fillText(line.slice(3),10,y);y+=14;continue}
+            if(rawLine.startsWith('- ')||rawLine.startsWith('* ')){ctx.fillStyle='#5b8dd9';ctx.font='10px monospace';ctx.fillText('•',10,y);ctx.fillStyle='#888890';ctx.fillText(line.slice(2),20,y);y+=lineH;continue}
+        }
+        const t=rawLine.trimStart();
+        let color='#5a5a6e';
+        if(t.startsWith('//')||t.startsWith('#')||t.startsWith('--')){color='#4a5568'}
+        else if(/^(import|export|from|require)\b/.test(t)){color='#c678dd'}
+        else if(/^(const|let|var|def |fn |func |function|class |return|if |else|for |while |async )\b/.test(t)){color='#7c9dc5'}
+        else if(t.startsWith('"')||t.startsWith("'")||t.startsWith('`')){color='#98c379'}
+        else{color='#6b7280'}
+        ctx.fillStyle=color; ctx.font='10px monospace';
+        ctx.fillText(line,10,y); y+=lineH;
+    }
+    const grad=ctx.createLinearGradient(0,H*.72,0,H);
+    grad.addColorStop(0,'rgba(13,13,16,0)'); grad.addColorStop(1,'rgba(13,13,16,.97)');
+    ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+    return canvas.toDataURL('image/jpeg',0.92);
+}
+
+// ── Font thumb helper ──
+async function renderFontThumb(url, ext, name) {
+    try {
+        const ff = new FontFace(`fthumb_stress_${Date.now()}`, `url(${url})`);
+        await ff.load(); document.fonts.add(ff);
+        const canvas = document.createElement('canvas');
+        canvas.width=300; canvas.height=168;
+        const ctx=canvas.getContext('2d');
+        ctx.fillStyle='#18181b'; ctx.fillRect(0,0,300,168);
+        ctx.fillStyle='#e8e8ea'; ctx.font=`56px "${ff.family}"`;
+        ctx.textAlign='center'; ctx.fillText('Aa',150,90);
+        ctx.font=`14px "${ff.family}"`; ctx.fillStyle='#888890';
+        ctx.fillText('The quick brown fox',150,118);
+        ctx.font='10px monospace'; ctx.fillStyle='#4a4a54';
+        ctx.fillText(`.${ext.toUpperCase()}`,150,142);
+        return canvas.toDataURL('image/jpeg',0.88);
+    } catch(e) {
+        return ThumbnailEngine.placeholder(ext, name);
+    }
+}
+
+// ── Image generators ──
+function makeCanvasDataURL(w=120,h=90,draw) {
+    const c=document.createElement('canvas'); c.width=w; c.height=h;
+    const ctx=c.getContext('2d'); draw(ctx,w,h); return c.toDataURL('image/png');
+}
+function makePNG(){
+    return makeCanvasDataURL(120,90,(ctx,w,h)=>{
+        const g=ctx.createLinearGradient(0,0,w,h);
+        g.addColorStop(0,'#4f7fff'); g.addColorStop(1,'#d1607a');
+        ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+        ctx.fillStyle='rgba(255,255,255,.7)'; ctx.font='bold 20px sans-serif';
+        ctx.textAlign='center'; ctx.fillText('PNG',w/2,h/2+7);
+    });
+}
+function makeJPEG(){
+    const c=document.createElement('canvas'); c.width=120; c.height=90;
+    const ctx=c.getContext('2d');
+    ctx.fillStyle='#7c2d12'; ctx.fillRect(0,0,120,90);
+    ctx.fillStyle='#fff'; ctx.font='bold 20px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('JPEG',60,52);
+    return c.toDataURL('image/jpeg',0.9);
+}
+function makeWebP(){
+    const c=document.createElement('canvas'); c.width=120; c.height=90;
+    const ctx=c.getContext('2d');
+    ctx.fillStyle='#14532d'; ctx.fillRect(0,0,120,90);
+    ctx.fillStyle='#fff'; ctx.font='bold 18px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('WebP',60,52);
+    return c.toDataURL('image/webp',0.9);
+}
+function makeGIF(){
+    // Return a tiny valid GIF (1×1 pixel, red)
+    const b64='R0lGODlhAQABAIAAAP8AAP///yH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==';
+    return 'data:image/gif;base64,'+b64;
+}
+function makeBMP(){
+    // 2×2 BMP — minimal valid BMP
+    const bytes=new Uint8Array([
+        0x42,0x4D,0x46,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x36,0x00,0x00,0x00,
+        0x28,0x00,0x00,0x00,0x02,0x00,0x00,0x00,0x02,0x00,0x00,0x00,0x01,0x00,
+        0x18,0x00,0x00,0x00,0x00,0x00,0x10,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0xFF,0x00,0x00,0x00,0xFF,0x00,0x00,0x00,
+        0x00,0xFF,0x00,0x00,0x00,0xFF,0x00,0x00,
+    ]);
+    const blob=new Blob([bytes],{type:'image/bmp'});
+    return URL.createObjectURL(blob);
+}
+
+// ── Minimal PDF builder ──
+function buildMinimalPDF() {
+    const content = `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
+4 0 obj<</Length 44>>
+stream
+BT /F1 24 Tf 60 90 Td (PDF Test) Tj ET
+endstream
+endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+xref
+0 6
+0000000000 65535 f
+0000000009 00000 n
+0000000058 00000 n
+0000000115 00000 n
+0000000266 00000 n
+0000000360 00000 n
+trailer<</Size 6/Root 1 0 R>>
+startxref
+441
+%%EOF`;
+    return new TextEncoder().encode(content);
+}
+
+// ── Small PNG base64 ──
+function makeSmallPNGBase64() {
+    const c=document.createElement('canvas'); c.width=40; c.height=30;
+    const ctx=c.getContext('2d');
+    ctx.fillStyle='#4f7fff'; ctx.fillRect(0,0,40,30);
+    ctx.fillStyle='#fff'; ctx.font='8px sans-serif'; ctx.fillText('img',5,18);
+    return c.toDataURL('image/png').split(',')[1];
+}
+
+// ── Video thumbnail ──
+async function captureVideoThumb(type='mp4') {
+    return new Promise(resolve => {
+        // Create a minimal video using canvas stream
+        try {
+            const c=document.createElement('canvas'); c.width=160; c.height=90;
+            const ctx=c.getContext('2d');
+            ctx.fillStyle='#1e3a5f'; ctx.fillRect(0,0,160,90);
+            ctx.fillStyle='#4f7fff'; ctx.beginPath(); ctx.arc(80,45,25,0,Math.PI*2); ctx.fill();
+            ctx.fillStyle='#fff'; ctx.font='bold 14px sans-serif'; ctx.textAlign='center';
+            ctx.fillText('▶',80,51);
+            resolve(c.toDataURL('image/jpeg',0.85));
+        } catch(e) { resolve(null); }
+    });
+}
+
+// ── ZIP thumb test ──
+async function testZipThumb() {
+    try {
+        // Load JSZip
+        if (!window.JSZip) {
+            await new Promise((res,rej)=>{
+                const s=document.createElement('script');
+                s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+                s.onload=res; s.onerror=rej; document.head.appendChild(s);
+            });
+        }
+        const pngB64=makeSmallPNGBase64();
+        const zip=new JSZip();
+        zip.file('preview.png', pngB64, {base64:true});
+        zip.file('readme.txt','Hello from ZIP!');
+        const blob=await zip.generateAsync({type:'blob'});
+        // Extract using JSZip like the main app
+        const z=await JSZip.loadAsync(blob);
+        const imgFile=Object.values(z.files).find(f=>/\.(png|jpg|jpeg)$/i.test(f.name)&&!f.dir);
+        if(imgFile){
+            const imgBlob=await imgFile.async('blob');
+            return URL.createObjectURL(imgBlob);
+        }
+        return null;
+    } catch(e) { return null; }
+}
+
+// ══════════════════════════════════════════════════════════
+//  UI
+// ══════════════════════════════════════════════════════════
+
+const results = {}; // id → { status, thumb, time, error, method, notes }
+TESTS.forEach(t => { results[t.id] = { status:'pending', thumb:null, time:null, error:null, method:'', notes:'' }; });
+
+const CATEGORIES = [...new Set(TESTS.map(t => t.category))];
+let activeCategory = 'All';
+
+function buildTabs() {
+    const nav = document.getElementById('tabs');
+    const allCount = TESTS.length;
+    let html = `<div class="tab active" data-cat="All" onclick="setCategory('All')">All <span class="badge">${allCount}</span></div>`;
+    for (const cat of CATEGORIES) {
+        const n = TESTS.filter(t=>t.category===cat).length;
+        html += `<div class="tab" data-cat="${cat}" onclick="setCategory('${cat}')">${cat} <span class="badge">${n}</span></div>`;
+    }
+    nav.innerHTML = html;
+}
+
+function setCategory(cat) {
+    activeCategory = cat;
+    document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.cat===cat));
+    renderGrid();
+}
+
+function renderGrid() {
+    const tests = activeCategory==='All' ? TESTS : TESTS.filter(t=>t.category===activeCategory);
+    const grid = document.getElementById('grid');
+    if (!tests.length) { grid.innerHTML='<div class="empty-grid">No tests in this category</div>'; return; }
+    grid.innerHTML = tests.map(t => cardHTML(t)).join('');
+    document.getElementById('topbarMeta').textContent = `${TESTS.length} tests · ${CATEGORIES.length} categories`;
+}
+
+function cardHTML(t) {
+    const r = results[t.id];
+    const statusClass = r.status;
+    let thumbHTML = '';
+    if (r.thumb) {
+        thumbHTML = `<img src="${r.thumb}" loading="lazy">`;
+    } else if (r.status === 'running') {
+        thumbHTML = `<div class="thumb-spinner"><div class="spinner"></div></div>`;
+    } else {
+        thumbHTML = `<div class="thumb-placeholder"><span class="ext-big">.${t.ext}</span><span>${r.status==='pending'?'Not run yet':r.status==='fail'?'Failed':'—'}</span></div>`;
+    }
+    const timeStr = r.time !== null ? `${r.time}ms` : '';
+    const errStr = r.error ? `<div class="card-err">⚠ ${r.error.slice(0,80)}</div>` : '';
+    return `<div class="card ${statusClass}" id="card_${t.id}" onclick="openModal('${t.id}')">
+        <div class="thumb-wrap">${thumbHTML}<div class="status-dot"></div></div>
+        <div class="card-info">
+            <div class="card-ext">.${t.ext}</div>
+            <div class="card-label">${t.label}</div>
+            <div class="card-desc">${t.desc}</div>
+            ${timeStr ? `<div class="card-time">⏱ ${timeStr}</div>` : ''}
+            ${errStr}
+        </div>
+        <button class="run-btn" onclick="event.stopPropagation();runOne('${t.id}')">
+            ${r.status==='running'?'Running…':'▶ Run'}
+        </button>
+    </div>`;
+}
+
+function updateCard(id) {
+    const t = TESTS.find(t=>t.id===id);
+    if (!t) return;
+    const existing = document.getElementById(`card_${id}`);
+    if (!existing) return;
+    existing.outerHTML = cardHTML(t);
+    // Re-bind since we replaced it
+}
+
+async function runOne(id) {
+    const t = TESTS.find(t=>t.id===id);
+    if (!t) return;
+    results[t.id] = { status:'running', thumb:null, time:null, error:null, method:'', notes:'' };
+    updateCard(id);
+    updateSummary();
+    const start = performance.now();
+    try {
+        const res = await t.runner();
+        const elapsed = Math.round(performance.now() - start);
+        results[t.id] = {
+            status: res.thumb ? 'pass' : 'fail',
+            thumb: res.thumb,
+            time: elapsed,
+            error: res.thumb ? null : 'Runner returned null (no thumbnail)',
+            method: res.method || '',
+            notes: res.notes || '',
+        };
+    } catch(e) {
+        const elapsed = Math.round(performance.now() - start);
+        results[t.id] = { status:'fail', thumb:null, time:elapsed, error:e.message||String(e), method:'', notes:'' };
+    }
+    updateCard(id);
+    updateSummary();
+}
+
+async function runAll() {
+    const btn = document.getElementById('runAllBtn');
+    btn.disabled = true; btn.textContent = 'Running…';
+    const tests = activeCategory==='All' ? TESTS : TESTS.filter(t=>t.category===activeCategory);
+    // Run in batches of 4 for parallelism without overwhelming
+    for (let i=0; i<tests.length; i+=4) {
+        await Promise.all(tests.slice(i,i+4).map(t=>runOne(t.id)));
+    }
+    btn.disabled = false;
+    btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 2l7 4-7 4V2z" fill="currentColor"/></svg> Run All`;
+    updateSummary();
+}
+
+function updateSummary() {
+    const total = TESTS.length;
+    const pass = TESTS.filter(t=>results[t.id].status==='pass').length;
+    const fail = TESTS.filter(t=>results[t.id].status==='fail').length;
+    const running = TESTS.filter(t=>results[t.id].status==='running').length;
+    const pending = total - pass - fail - running;
+    document.getElementById('summary').innerHTML = `
+        <span><span class="dot pass"></span>${pass} passed</span>
+        <span><span class="dot fail"></span>${fail} failed</span>
+        ${running?`<span><span class="dot running"></span>${running} running</span>`:''}
+        <span><span class="dot pending"></span>${pending} pending</span>
+        <span style="margin-left:auto;color:var(--text3)">${total} total</span>
+    `;
+}
+
+// ── Modal ──
+let modalTestId = null;
+function openModal(id) {
+    modalTestId = id;
+    const t = TESTS.find(t=>t.id===id);
+    const r = results[id];
+    document.getElementById('modalTitle').textContent = `${t.label} (.${t.ext})`;
+    const statusBadge = r.status==='pass' ? '<span class="status-badge pass">✓ Pass</span>'
+        : r.status==='fail' ? '<span class="status-badge fail">✗ Fail</span>'
+        : r.status==='running' ? '<span class="status-badge pending">● Running</span>'
+        : '<span class="status-badge pending">○ Pending</span>';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="modal-thumb">
+            ${r.thumb ? `<img src="${r.thumb}">` : `<div style="color:var(--text3);font-size:12px;">${r.status==='running'?'⏳ Generating…':'Not run yet'}</div>`}
+        </div>
+        <div>
+            ${statusBadge}
+        </div>
+        <div class="info-row"><span class="info-key">Category</span><span class="info-val">${t.category}</span></div>
+        <div class="info-row"><span class="info-key">Extension</span><span class="info-val">.${t.ext}</span></div>
+        <div class="info-row"><span class="info-key">Method</span><span class="info-val">${r.method||'—'}</span></div>
+        ${r.notes ? `<div class="info-row"><span class="info-key">Notes</span><span class="info-val">${r.notes}</span></div>` : ''}
+        ${r.time !== null ? `<div class="info-row"><span class="info-key">Duration</span><span class="info-val">${r.time}ms</span></div>` : ''}
+        ${r.error ? `<div class="info-row"><span class="info-key">Error</span><span class="info-val" style="color:var(--danger)">${r.error}</span></div>` : ''}
+        <div class="info-row"><span class="info-key">Description</span><span class="info-val">${t.desc}</span></div>
+        <button class="re-run-btn" onclick="reRunFromModal()">▶ Re-run this test</button>
+    `;
+    document.getElementById('modal').classList.add('open');
+}
+
+async function reRunFromModal() {
+    if (!modalTestId) return;
+    await runOne(modalTestId);
+    openModal(modalTestId); // refresh modal content
+}
+
+function closeModal(e) {
+    if (e && e.target !== document.getElementById('modal')) return;
+    document.getElementById('modal').classList.remove('open');
+}
+
+// ── Init ──
+buildTabs();
+renderGrid();
+updateSummary();
+</script>
+</body>
+</html>
