@@ -474,7 +474,7 @@ function refreshThumbIfVisible(fileId) {
 const SYSTEM_PANELS = new Set(['__home__','__organizer__','__duplicates__','__storage__','__export__']);
 
 function renderHomePanel() {
-    document.getElementById('topbarTitle').textContent = 'File Cleaner';
+    document.getElementById('topbarTitle').textContent = 'File Organizer';
     document.getElementById('topbarMeta').textContent = '';
     document.getElementById('mainArea').innerHTML = `
         <div class="empty-state home-panel">
@@ -486,7 +486,7 @@ function renderHomePanel() {
                     <rect x="28" y="28" width="20" height="20" rx="5" fill="var(--accent)" opacity="0.25"/>
                 </svg>
             </div>
-            <h2 style="margin-top:18px;margin-bottom:6px;">File Cleaner</h2>
+            <h2 style="margin-top:18px;margin-bottom:6px;">File Organizer</h2>
             <p style="margin-bottom:4px;opacity:0.55;font-size:13px;">Sort, review, and clean up your files.</p>
             <p style="margin-bottom:28px;opacity:0.35;font-size:12px;">Made with patience by Karl</p>
             <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
@@ -499,7 +499,38 @@ function renderHomePanel() {
                     Select Folder
                 </button>
             </div>
+    
+<div class="github-footer">
+
+    <!-- Main link -->
+    <a href="https://github.com/K4RLT/File_organizer" target="_blank" class="github-main-link">
+        View GitHub Project
+    </a>
+
+    <!-- Stats -->
+    <div class="github-stats">
+        ⭐ <span id="ghStars">-</span>
+        <span class="divider">|</span>
+        🍴 <span id="ghForks">-</span>
+    </div>
+
+</div>
         </div>`;
+    
+    loadGithubStats(); // ← important, don’t skip this like last-minute homework
+}
+
+function loadGithubStats() {
+    fetch("https://api.github.com/repos/K4RLT/File_organizer")
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById("ghStars").textContent = data.stargazers_count ?? "-";
+            document.getElementById("ghForks").textContent = data.forks_count ?? "-";
+        })
+        .catch(() => {
+            document.getElementById("ghStars").textContent = "?";
+            document.getElementById("ghForks").textContent = "?";
+        });
 }
 
 function renderCurrentFolder() {

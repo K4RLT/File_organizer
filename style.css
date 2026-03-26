@@ -186,6 +186,35 @@ input, textarea { -webkit-user-select: text; user-select: text; }
     flex-shrink: 0;
 }
 
+.github-footer {
+    margin-top: 16px;
+    text-align: center;
+}
+
+.github-main-link {
+    display: inline-block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+    margin-bottom: 6px;
+}
+
+.github-main-link:hover {
+    text-decoration: underline;
+}
+
+.github-stats {
+    font-size: 11px;
+    opacity: 0.6;
+    color: var(--text);
+}
+
+.github-stats .divider {
+    margin: 0 6px;
+    opacity: 0.4;
+}
+
 /* ── Folder List ── */
 .folder-list {
     list-style: none;
