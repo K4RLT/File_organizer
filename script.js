@@ -295,6 +295,114 @@ async function loadJSZip() {
     });
 }
 
+// ── fflate: streaming ZIP builder — reads files chunk by chunk, never loads whole file into RAM ──
+async function _loadFflate() {
+    if (window.fflate) return window.fflate;
+    return new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js';
+        s.onload = () => res(window.fflate);
+        s.onerror = rej;
+        document.head.appendChild(s);
+    });
+}
+
+/**
+ * Build and download a ZIP using fflate's streaming API.
+ * Input files are read via File.stream() in small chunks — no large ArrayBuffer ever allocated.
+ * With showSaveFilePicker: chunks pipe directly to disk (zero blob accumulation).
+ * Without it: chunks accumulate as small Uint8Arrays → assembled into a Blob
+ *   (modern browsers back large Blobs on disk, not the JS heap, so ~2 GB is survivable).
+ *
+ * @param {Array<{path:string, file:File, lastModified:number}>} entries
+ * @param {string} filename  suggested ZIP filename
+ * @returns {Promise<'saved'|'downloaded'|'cancelled'>}
+ */
+async function _buildZipStreaming(entries, filename) {
+    const { Zip, ZipPassThrough } = await _loadFflate();
+
+    // Helper: stream one File through a ZipPassThrough entry
+    async function pipeFile(zf, file) {
+        const reader = file.stream().getReader();
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) { zf.push(new Uint8Array(0), true); break; }
+            zf.push(value); // fflate calls Zip's output callback synchronously per chunk
+        }
+    }
+
+    // ── Path A: showSaveFilePicker → stream chunks directly to a file on disk ──
+    if (window.showSaveFilePicker) {
+        try {
+            const fh = await window.showSaveFilePicker({
+                suggestedName: filename,
+                types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
+            });
+            const writable = await fh.createWritable();
+            const writeQueue = []; // collect write promises; FileSystemWritableFileStream orders them internally
+
+            await new Promise((resolve, reject) => {
+                const zip = new Zip((err, data, final) => {
+                    if (err) { writable.abort().catch(() => {}); reject(err); return; }
+                    writeQueue.push(writable.write(data));
+                    if (final) {
+                        // Wait for all queued writes, then close
+                        Promise.all(writeQueue)
+                            .then(() => writable.close())
+                            .then(resolve)
+                            .catch(e => { writable.abort().catch(() => {}); reject(e); });
+                    }
+                });
+
+                (async () => {
+                    try {
+                        for (const entry of entries) {
+                            const zf = new ZipPassThrough(entry.path, { mtime: new Date(entry.lastModified || Date.now()) });
+                            zip.add(zf);
+                            await pipeFile(zf, entry.file);
+                        }
+                        zip.end();
+                    } catch(e) { writable.abort().catch(() => {}); reject(e); }
+                })();
+            });
+
+            return 'saved';
+        } catch(e) {
+            if (e.name === 'AbortError') return 'cancelled';
+            console.warn('ZIP stream-to-file failed, falling back to blob:', e);
+            // Fall through to Path B
+        }
+    }
+
+    // ── Path B: stream chunks into an array, then assemble a Blob ──
+    // fflate still reads input in small chunks — no giant ArrayBuffer.
+    // The output Blob is large but modern browsers back it on disk rather than the JS heap.
+    const chunks = [];
+
+    await new Promise((resolve, reject) => {
+        const zip = new Zip((err, data, final) => {
+            if (err) { reject(err); return; }
+            chunks.push(data);
+            if (final) resolve();
+        });
+
+        (async () => {
+            try {
+                for (const entry of entries) {
+                    const zf = new ZipPassThrough(entry.path, { mtime: new Date(entry.lastModified || Date.now()) });
+                    zip.add(zf);
+                    await pipeFile(zf, entry.file);
+                }
+                zip.end();
+            } catch(e) { reject(e); }
+        })();
+    });
+
+    const blob = new Blob(chunks, { type: 'application/zip' });
+    _triggerDownload(blob, filename);
+    return 'downloaded';
+}
+
 async function extractArchivesSequential(archives) {
     try { await loadJSZip(); } catch(_) { 
         // JSZip failed to load — mark all as done
@@ -2883,59 +2991,21 @@ async function exportZipFlat() {
     const allFiles = Object.values(snapshot).flat();
     if (!allFiles.length) { showToast('No sorted files to export'); return; }
 
-    const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
-    const MB = 1024 * 1024;
-
     showToast('Building flat ZIP…');
     try {
-        const JSZipLib = await loadJSZip();
-        const zip = new JSZipLib();
-        // Deduplicate filenames with a counter
+        // Deduplicate names across folders
         const seen = {};
-        allFiles.forEach(file => {
-            const ext   = file.ext ? '.' + file.ext : '';
-            const base  = file.ext && file.name.endsWith(ext) ? file.name.slice(0, -ext.length) : file.name;
+        const entries = allFiles.map(file => {
+            const ext  = file.ext ? '.' + file.ext : '';
+            const base = file.ext && file.name.endsWith(ext) ? file.name.slice(0, -ext.length) : file.name;
             seen[file.name] = (seen[file.name] || 0) + 1;
             const fname = seen[file.name] > 1 ? `${base} (${seen[file.name]-1})${ext}` : file.name;
-            zip.file(fname, file._file, { date: new Date(file.lastModified) });
+            return { path: fname, file: file._file, lastModified: file.lastModified };
         });
-
-        // ── Streaming path via showSaveFilePicker ──
-        if (window.showSaveFilePicker) {
-            try {
-                const fh = await window.showSaveFilePicker({
-                    suggestedName: `flat-export-${Date.now()}.zip`,
-                    types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
-                });
-                const writable = await fh.createWritable();
-                let writeError = null;
-                await new Promise((resolve, reject) => {
-                    zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' })
-                        .on('data', chunk => { writable.write(chunk).catch(e => { writeError = e; }); })
-                        .on('end', () => {
-                            if (writeError) { writable.abort().catch(()=>{}); reject(writeError); return; }
-                            writable.close().then(resolve).catch(reject);
-                        })
-                        .on('error', err => { writable.abort().catch(()=>{}); reject(err); })
-                        .resume();
-                });
-                showToast(`Flat ZIP: ${allFiles.length} files saved`);
-                return;
-            } catch(e) {
-                if (e.name === 'AbortError') return;
-                console.warn('Streaming flat ZIP failed, trying blob fallback:', e);
-            }
-        }
-
-        // ── Blob fallback ──
-        if (totalSize > 512 * MB) {
-            showToast('⚠️ Too large for in-browser ZIP. Use Quick Export instead.', 6000);
-            return;
-        }
-        const blob = await zip.generateAsync({ type:'blob', compression:'STORE' });
-        _triggerDownload(blob, `flat-export-${Date.now()}.zip`);
-        showToast(`Flat ZIP: ${allFiles.length} files downloaded`);
-    } catch(e) { showToast('ZIP failed — files may be too large. Try Quick Export instead.'); }
+        const result = await _buildZipStreaming(entries, `flat-export-${Date.now()}.zip`);
+        if (result === 'cancelled') return;
+        showToast(`Flat ZIP: ${allFiles.length} files ${result === 'saved' ? 'saved' : 'downloaded'}`);
+    } catch(e) { showToast(`ZIP failed: ${e.message || 'unknown error'}`, 5000); }
 }
 
 // ── Per-folder export ──
@@ -2960,46 +3030,14 @@ async function exportSingleFolder(folderName) {
             return;
         } catch(e) { if (e.name === 'AbortError') return; }
     }
-    // Fallback: ZIP just this folder
+    // Fallback: ZIP just this folder using fflate streaming (no full ArrayBuffer)
+    showToast(`Zipping "${folderName}"…`);
     try {
-        const totalSize = files.reduce((s, f) => s + f.size, 0);
-        const JSZipLib = await loadJSZip();
-        const zip = new JSZipLib();
-        files.forEach(f => zip.file(f.name, f._file, { date: new Date(f.lastModified) }));
-
-        // Streaming path
-        if (window.showSaveFilePicker) {
-            try {
-                const fh = await window.showSaveFilePicker({
-                    suggestedName: `${folderName}-${Date.now()}.zip`,
-                    types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
-                });
-                const writable = await fh.createWritable();
-                let writeError = null;
-                await new Promise((resolve, reject) => {
-                    zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' })
-                        .on('data', chunk => { writable.write(chunk).catch(e => { writeError = e; }); })
-                        .on('end', () => {
-                            if (writeError) { writable.abort().catch(()=>{}); reject(writeError); return; }
-                            writable.close().then(resolve).catch(reject);
-                        })
-                        .on('error', err => { writable.abort().catch(()=>{}); reject(err); })
-                        .resume();
-                });
-                showToast(`"${folderName}" saved as ZIP`);
-                return;
-            } catch(e) {
-                if (e.name === 'AbortError') return;
-            }
-        }
-        if (totalSize > 512 * 1024 * 1024) {
-            showToast('⚠️ Folder too large for in-browser ZIP. Use Quick Export instead.', 6000);
-            return;
-        }
-        const blob = await zip.generateAsync({ type:'blob', compression:'STORE' });
-        _triggerDownload(blob, `${folderName}-${Date.now()}.zip`);
-        showToast(`"${folderName}" exported as ZIP`);
-    } catch(e) { showToast('Export failed — try Quick Export for large files.'); }
+        const entries = files.map(f => ({ path: f.name, file: f._file, lastModified: f.lastModified }));
+        const result  = await _buildZipStreaming(entries, `${folderName}-${Date.now()}.zip`);
+        if (result === 'cancelled') return;
+        showToast(`"${folderName}" ${result === 'saved' ? 'saved' : 'exported'} as ZIP`);
+    } catch(e) { showToast(`Export failed: ${e.message || 'unknown error'}`, 5000); }
 }
 
 // ── Select Files export ──
@@ -3124,50 +3162,16 @@ async function exportSelected() {
             return;
         } catch(e) { if (e.name === 'AbortError') return; }
     }
-    // Fallback ZIP
+    // Fallback ZIP using fflate streaming (no full ArrayBuffer, safe for large files)
+    showToast('Building ZIP…');
     try {
-        const totalSize = files.reduce((s, f) => s + f.size, 0);
-        const JSZipLib = await loadJSZip();
-        const zip = new JSZipLib();
-        files.forEach(f => zip.file(f.name, f._file, { date: new Date(f.lastModified) }));
-
-        // Streaming path
-        if (window.showSaveFilePicker) {
-            try {
-                const fh = await window.showSaveFilePicker({
-                    suggestedName: `selected-${Date.now()}.zip`,
-                    types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
-                });
-                const writable = await fh.createWritable();
-                let writeError = null;
-                await new Promise((resolve, reject) => {
-                    zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' })
-                        .on('data', chunk => { writable.write(chunk).catch(e => { writeError = e; }); })
-                        .on('end', () => {
-                            if (writeError) { writable.abort().catch(()=>{}); reject(writeError); return; }
-                            writable.close().then(resolve).catch(reject);
-                        })
-                        .on('error', err => { writable.abort().catch(()=>{}); reject(err); })
-                        .resume();
-                });
-                showToast(`Saved ${files.length} selected file${files.length !== 1 ? 's' : ''} as ZIP`);
-                exportSelect.ids.clear();
-                showExportPanel();
-                return;
-            } catch(e) {
-                if (e.name === 'AbortError') return;
-            }
-        }
-        if (totalSize > 512 * 1024 * 1024) {
-            showToast('⚠️ Selection too large for in-browser ZIP. Use Quick Export instead.', 6000);
-            return;
-        }
-        const blob = await zip.generateAsync({ type:'blob', compression:'STORE' });
-        _triggerDownload(blob, `selected-${Date.now()}.zip`);
-        showToast(`Downloaded ${files.length} selected files`);
+        const entries = files.map(f => ({ path: f.name, file: f._file, lastModified: f.lastModified }));
+        const result  = await _buildZipStreaming(entries, `selected-${Date.now()}.zip`);
+        if (result === 'cancelled') return;
+        showToast(`${result === 'saved' ? 'Saved' : 'Downloaded'} ${files.length} selected file${files.length !== 1 ? 's' : ''}`);
         exportSelect.ids.clear();
         showExportPanel();
-    } catch(e) { showToast('Export failed — files may be too large. Try Quick Export.'); }
+    } catch(e) { showToast(`Export failed: ${e.message || 'unknown error'}`, 5000); }
 }
 
 // ── Manifest CSV export ──
@@ -3231,62 +3235,23 @@ async function _fsaCopy(snapshot, allFiles, dirHandle, btnId) {
 }
 
 async function _zipDownload(snapshot, filename) {
-    const allFiles  = Object.values(snapshot).flat();
-    const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
-    const MB = 1024 * 1024;
-
+    const allFiles = Object.values(snapshot).flat();
+    if (!allFiles.length) return;
     showToast('Building ZIP…');
     try {
-        const JSZipLib = await loadJSZip();
-        const zip = new JSZipLib();
+        const entries = [];
         for (const [folderName, files] of Object.entries(snapshot)) {
-            const zf = zip.folder(folderName);
-            files.forEach(f => zf.file(f.name, f._file, { date: new Date(f.lastModified) }));
-        }
-
-        // ── Streaming path: showSaveFilePicker → FileSystemWritableFileStream ──
-        // Avoids accumulating the full ZIP blob in RAM — JSZip streams chunks directly to disk.
-        // This is the only safe path for exports > ~200 MB.
-        if (window.showSaveFilePicker) {
-            try {
-                const fh = await window.showSaveFilePicker({
-                    suggestedName: filename,
-                    types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
-                });
-                const writable = await fh.createWritable();
-                let writeError = null;
-                await new Promise((resolve, reject) => {
-                    zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' })
-                        .on('data', chunk => {
-                            // FileSystemWritableFileStream queues writes in order even without awaiting
-                            writable.write(chunk).catch(e => { writeError = e; });
-                        })
-                        .on('end', () => {
-                            if (writeError) { writable.abort().catch(()=>{}); reject(writeError); return; }
-                            writable.close().then(resolve).catch(reject);
-                        })
-                        .on('error', err => { writable.abort().catch(()=>{}); reject(err); })
-                        .resume();
-                });
-                showToast(`ZIP saved — ${allFiles.length} file${allFiles.length !== 1 ? 's' : ''}`);
-                return;
-            } catch(e) {
-                if (e.name === 'AbortError') return; // user cancelled picker
-                console.warn('Streaming ZIP save failed, trying blob fallback:', e);
+            for (const f of files) {
+                entries.push({ path: `${folderName}/${f.name}`, file: f._file, lastModified: f.lastModified });
             }
         }
-
-        // ── Blob fallback — only safe for smaller exports ──
-        if (totalSize > 512 * MB) {
-            showToast('⚠️ Export too large for in-browser ZIP. Use Quick Export to copy files directly to a folder instead.', 7000);
-            return;
-        }
-        const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-        _triggerDownload(blob, filename);
-        showToast(`ZIP downloaded — ${allFiles.length} file${allFiles.length !== 1 ? 's' : ''}`);
+        const result = await _buildZipStreaming(entries, filename);
+        if (result === 'cancelled') return;
+        const n = allFiles.length;
+        showToast(`ZIP ${result === 'saved' ? 'saved' : 'downloaded'} — ${n} file${n !== 1 ? 's' : ''}`);
     } catch(e) {
         console.error('ZIP error:', e);
-        showToast('ZIP failed — files may be too large for browser memory. Use Quick Export instead.', 5000);
+        showToast(`ZIP failed: ${e.message || 'unknown error'}`, 5000);
     }
 }
 
