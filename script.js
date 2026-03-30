@@ -252,9 +252,14 @@ function showLoading(msg) {
 function captureVideoThumbnail(entry) {
     const video = document.createElement('video');
     video.muted = true;
+    video.preload = 'metadata';
     video.src = state.blobCache[entry.id];
-    video.currentTime = 1.5;
-    video.addEventListener('seeked', () => {
+
+    // Timeout guard — if seeked never fires (corrupt/unsupported), clean up after 12s
+    const guard = setTimeout(() => { video.src = ''; }, 12000);
+
+    const grab = () => {
+        clearTimeout(guard);
         try {
             const canvas = document.createElement('canvas');
             canvas.width  = video.videoWidth  || 320;
@@ -264,7 +269,15 @@ function captureVideoThumbnail(entry) {
         } catch(_) {}
         video.src = '';
         refreshThumbIfVisible(entry.id);
+    };
+
+    video.addEventListener('seeked', grab, { once: true });
+    video.addEventListener('error', () => { clearTimeout(guard); video.src = ''; }, { once: true });
+
+    video.addEventListener('loadedmetadata', () => {
+        video.currentTime = Math.min(1.5, (video.duration || 0) * 0.1);
     }, { once: true });
+
     video.load();
 }
 
@@ -995,8 +1008,9 @@ function scheduleFontThumbnail(entry) {
     const url = state.blobCache[entry.id];
     if (!url) return;
     setTimeout(async () => {
+        let ff;
         try {
-            const ff = new FontFace(`fthumb_${entry.id}`, `url(${url})`);
+            ff = new FontFace(`fthumb_${entry.id}`, `url(${url})`);
             await ff.load(); document.fonts.add(ff);
             const canvas = document.createElement('canvas');
             canvas.width = 300; canvas.height = 168;
@@ -1011,6 +1025,10 @@ function scheduleFontThumbnail(entry) {
             state.thumbnailCache[entry.id] = canvas.toDataURL('image/jpeg', 0.88);
             refreshThumbIfVisible(entry.id);
         } catch(_) {}
+        finally {
+            // Remove FontFace from document.fonts to prevent accumulation leak
+            if (ff) try { document.fonts.delete(ff); } catch(_) {}
+        }
     }, 100);
 }
 
@@ -1765,7 +1783,7 @@ function buildFolderPickerList() {
     }
 
     list.innerHTML = allFolders.map(f => `
-        <li class="picker-folder-item" onclick="confirmFolderPick('${escHtml(f.name)}')">
+        <li class="picker-folder-item" data-folder="${escHtml(f.name)}" onclick="confirmFolderPick(this.dataset.folder)">
             <div class="picker-folder-icon ${f.icon}">${f.emoji}</div>
             <div class="picker-folder-name">${escHtml(f.label)}</div>
             <div class="picker-folder-count">${(state.folders[f.name] || []).length}</div>
@@ -1935,7 +1953,7 @@ function openMovePicker(fileId) {
 
     const list = document.getElementById('folderPickerList');
     list.innerHTML = allFolders.map(f => `
-        <li class="picker-folder-item" onclick="confirmReviewMovePick('${escHtml(f.name)}')">
+        <li class="picker-folder-item" data-folder="${escHtml(f.name)}" onclick="confirmReviewMovePick(this.dataset.folder)">
             <div class="picker-folder-icon ${f.icon}">${f.emoji}</div>
             <div class="picker-folder-name">${escHtml(f.label)}</div>
             <div class="picker-folder-count">${(state.folders[f.name] || []).length}</div>
@@ -2639,10 +2657,11 @@ async function getUniqueFileHandle(dirHandle, name) {
     let counter = 1;
     while (true) {
         try {
-            await dirHandle.getFileHandle(finalName, { create: false }); // throws if not found
+            await dirHandle.getFileHandle(finalName, { create: false }); // throws NotFoundError if missing
             finalName = `${base} (${counter++})${ext}`;
-        } catch(_) {
-            break; // File doesn't exist — safe to create
+        } catch(e) {
+            if (e.name === 'NotFoundError') break; // File doesn't exist — safe to create
+            throw e; // Permission errors, quota errors, etc. should surface
         }
     }
     return dirHandle.getFileHandle(finalName, { create: true });
@@ -2834,6 +2853,26 @@ async function exportZipFoldered() {
     const SKIP = new Set(['queue','skipped','trash']);
     const snapshot = _buildExportSnapshot(SKIP);
     if (!Object.keys(snapshot).length) { showToast('No sorted files to export'); return; }
+
+    const allFiles  = Object.values(snapshot).flat();
+    const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
+
+    // FSA streams files directly to disk — no memory limit, handles GB-scale files.
+    if (window.showDirectoryPicker) {
+        try {
+            const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+            await _fsaCopy(snapshot, allFiles, dir, 'exportBtn');
+            return;
+        } catch(e) {
+            if (e.name === 'AbortError') return;
+            // FSA failed unexpectedly — fall through to ZIP
+        }
+    }
+
+    // ZIP fallback: warn for large sets since ZIP loads everything into memory
+    if (totalSize > 256 * 1024 * 1024) {
+        showToast('⚠️ Large export — ZIP may fail or crash. Use Quick Export instead.', 5000);
+    }
     await _zipDownload(snapshot, `export-${Date.now()}.zip`);
 }
 
@@ -2843,6 +2882,10 @@ async function exportZipFlat() {
     const snapshot = _buildExportSnapshot(SKIP);
     const allFiles = Object.values(snapshot).flat();
     if (!allFiles.length) { showToast('No sorted files to export'); return; }
+
+    const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
+    const MB = 1024 * 1024;
+
     showToast('Building flat ZIP…');
     try {
         const JSZipLib = await loadJSZip();
@@ -2856,10 +2899,43 @@ async function exportZipFlat() {
             const fname = seen[file.name] > 1 ? `${base} (${seen[file.name]-1})${ext}` : file.name;
             zip.file(fname, file._file, { date: new Date(file.lastModified) });
         });
+
+        // ── Streaming path via showSaveFilePicker ──
+        if (window.showSaveFilePicker) {
+            try {
+                const fh = await window.showSaveFilePicker({
+                    suggestedName: `flat-export-${Date.now()}.zip`,
+                    types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
+                });
+                const writable = await fh.createWritable();
+                let writeError = null;
+                await new Promise((resolve, reject) => {
+                    zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' })
+                        .on('data', chunk => { writable.write(chunk).catch(e => { writeError = e; }); })
+                        .on('end', () => {
+                            if (writeError) { writable.abort().catch(()=>{}); reject(writeError); return; }
+                            writable.close().then(resolve).catch(reject);
+                        })
+                        .on('error', err => { writable.abort().catch(()=>{}); reject(err); })
+                        .resume();
+                });
+                showToast(`Flat ZIP: ${allFiles.length} files saved`);
+                return;
+            } catch(e) {
+                if (e.name === 'AbortError') return;
+                console.warn('Streaming flat ZIP failed, trying blob fallback:', e);
+            }
+        }
+
+        // ── Blob fallback ──
+        if (totalSize > 512 * MB) {
+            showToast('⚠️ Too large for in-browser ZIP. Use Quick Export instead.', 6000);
+            return;
+        }
         const blob = await zip.generateAsync({ type:'blob', compression:'STORE' });
         _triggerDownload(blob, `flat-export-${Date.now()}.zip`);
         showToast(`Flat ZIP: ${allFiles.length} files downloaded`);
-    } catch(e) { showToast('ZIP failed: ' + e.message); }
+    } catch(e) { showToast('ZIP failed — files may be too large. Try Quick Export instead.'); }
 }
 
 // ── Per-folder export ──
@@ -2886,13 +2962,44 @@ async function exportSingleFolder(folderName) {
     }
     // Fallback: ZIP just this folder
     try {
+        const totalSize = files.reduce((s, f) => s + f.size, 0);
         const JSZipLib = await loadJSZip();
         const zip = new JSZipLib();
         files.forEach(f => zip.file(f.name, f._file, { date: new Date(f.lastModified) }));
+
+        // Streaming path
+        if (window.showSaveFilePicker) {
+            try {
+                const fh = await window.showSaveFilePicker({
+                    suggestedName: `${folderName}-${Date.now()}.zip`,
+                    types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
+                });
+                const writable = await fh.createWritable();
+                let writeError = null;
+                await new Promise((resolve, reject) => {
+                    zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' })
+                        .on('data', chunk => { writable.write(chunk).catch(e => { writeError = e; }); })
+                        .on('end', () => {
+                            if (writeError) { writable.abort().catch(()=>{}); reject(writeError); return; }
+                            writable.close().then(resolve).catch(reject);
+                        })
+                        .on('error', err => { writable.abort().catch(()=>{}); reject(err); })
+                        .resume();
+                });
+                showToast(`"${folderName}" saved as ZIP`);
+                return;
+            } catch(e) {
+                if (e.name === 'AbortError') return;
+            }
+        }
+        if (totalSize > 512 * 1024 * 1024) {
+            showToast('⚠️ Folder too large for in-browser ZIP. Use Quick Export instead.', 6000);
+            return;
+        }
         const blob = await zip.generateAsync({ type:'blob', compression:'STORE' });
         _triggerDownload(blob, `${folderName}-${Date.now()}.zip`);
         showToast(`"${folderName}" exported as ZIP`);
-    } catch(e) { showToast('Export failed: ' + e.message); }
+    } catch(e) { showToast('Export failed — try Quick Export for large files.'); }
 }
 
 // ── Select Files export ──
@@ -3019,15 +3126,48 @@ async function exportSelected() {
     }
     // Fallback ZIP
     try {
+        const totalSize = files.reduce((s, f) => s + f.size, 0);
         const JSZipLib = await loadJSZip();
         const zip = new JSZipLib();
         files.forEach(f => zip.file(f.name, f._file, { date: new Date(f.lastModified) }));
+
+        // Streaming path
+        if (window.showSaveFilePicker) {
+            try {
+                const fh = await window.showSaveFilePicker({
+                    suggestedName: `selected-${Date.now()}.zip`,
+                    types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
+                });
+                const writable = await fh.createWritable();
+                let writeError = null;
+                await new Promise((resolve, reject) => {
+                    zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' })
+                        .on('data', chunk => { writable.write(chunk).catch(e => { writeError = e; }); })
+                        .on('end', () => {
+                            if (writeError) { writable.abort().catch(()=>{}); reject(writeError); return; }
+                            writable.close().then(resolve).catch(reject);
+                        })
+                        .on('error', err => { writable.abort().catch(()=>{}); reject(err); })
+                        .resume();
+                });
+                showToast(`Saved ${files.length} selected file${files.length !== 1 ? 's' : ''} as ZIP`);
+                exportSelect.ids.clear();
+                showExportPanel();
+                return;
+            } catch(e) {
+                if (e.name === 'AbortError') return;
+            }
+        }
+        if (totalSize > 512 * 1024 * 1024) {
+            showToast('⚠️ Selection too large for in-browser ZIP. Use Quick Export instead.', 6000);
+            return;
+        }
         const blob = await zip.generateAsync({ type:'blob', compression:'STORE' });
         _triggerDownload(blob, `selected-${Date.now()}.zip`);
         showToast(`Downloaded ${files.length} selected files`);
         exportSelect.ids.clear();
         showExportPanel();
-    } catch(e) { showToast('Export failed: ' + e.message); }
+    } catch(e) { showToast('Export failed — files may be too large. Try Quick Export.'); }
 }
 
 // ── Manifest CSV export ──
@@ -3037,14 +3177,19 @@ async function exportManifest() {
     const files = state.files.filter(f => !SKIP.has(f.folder));
     if (!files.length) { showToast('No sorted files for manifest'); return; }
     showToast('Building manifest…');
+    const HASH_LIMIT = 200 * 1024 * 1024; // skip SHA-256 for files > 200 MB
     for (const f of files) {
         let hash = '';
         try {
-            const buf = await f._file.arrayBuffer();
-            const h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)))
-                .map(b=>b.toString(16).padStart(2,'0')).join('');
-            hash = h.slice(0,16);
-        } catch(_) {}
+            if (f.size <= HASH_LIMIT) {
+                const buf = await f._file.arrayBuffer();
+                const h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)))
+                    .map(b=>b.toString(16).padStart(2,'0')).join('');
+                hash = h.slice(0,16);
+            } else {
+                hash = 'skipped (>200MB)';
+            }
+        } catch(_) { hash = 'error'; }
         const d = f.lastModified ? new Date(f.lastModified).toISOString() : '';
         rows.push([f.name, f.folder, f.size, formatSize(f.size), f.type||'', f.ext||'', d, hash]);
     }
@@ -3086,6 +3231,10 @@ async function _fsaCopy(snapshot, allFiles, dirHandle, btnId) {
 }
 
 async function _zipDownload(snapshot, filename) {
+    const allFiles  = Object.values(snapshot).flat();
+    const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
+    const MB = 1024 * 1024;
+
     showToast('Building ZIP…');
     try {
         const JSZipLib = await loadJSZip();
@@ -3094,21 +3243,64 @@ async function _zipDownload(snapshot, filename) {
             const zf = zip.folder(folderName);
             files.forEach(f => zf.file(f.name, f._file, { date: new Date(f.lastModified) }));
         }
-        const blob = await zip.generateAsync({ type:'blob', compression:'STORE' });
+
+        // ── Streaming path: showSaveFilePicker → FileSystemWritableFileStream ──
+        // Avoids accumulating the full ZIP blob in RAM — JSZip streams chunks directly to disk.
+        // This is the only safe path for exports > ~200 MB.
+        if (window.showSaveFilePicker) {
+            try {
+                const fh = await window.showSaveFilePicker({
+                    suggestedName: filename,
+                    types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }]
+                });
+                const writable = await fh.createWritable();
+                let writeError = null;
+                await new Promise((resolve, reject) => {
+                    zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' })
+                        .on('data', chunk => {
+                            // FileSystemWritableFileStream queues writes in order even without awaiting
+                            writable.write(chunk).catch(e => { writeError = e; });
+                        })
+                        .on('end', () => {
+                            if (writeError) { writable.abort().catch(()=>{}); reject(writeError); return; }
+                            writable.close().then(resolve).catch(reject);
+                        })
+                        .on('error', err => { writable.abort().catch(()=>{}); reject(err); })
+                        .resume();
+                });
+                showToast(`ZIP saved — ${allFiles.length} file${allFiles.length !== 1 ? 's' : ''}`);
+                return;
+            } catch(e) {
+                if (e.name === 'AbortError') return; // user cancelled picker
+                console.warn('Streaming ZIP save failed, trying blob fallback:', e);
+            }
+        }
+
+        // ── Blob fallback — only safe for smaller exports ──
+        if (totalSize > 512 * MB) {
+            showToast('⚠️ Export too large for in-browser ZIP. Use Quick Export to copy files directly to a folder instead.', 7000);
+            return;
+        }
+        const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
         _triggerDownload(blob, filename);
-        const total = Object.values(snapshot).flat().length;
-        showToast(`ZIP downloaded — ${total} file${total!==1?'s':''}`);
-    } catch(e) { showToast('ZIP failed: ' + e.message); }
+        showToast(`ZIP downloaded — ${allFiles.length} file${allFiles.length !== 1 ? 's' : ''}`);
+    } catch(e) {
+        console.error('ZIP error:', e);
+        showToast('ZIP failed — files may be too large for browser memory. Use Quick Export instead.', 5000);
+    }
 }
 
 function _triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+    // Scale revoke delay by size — large files need more time before the download stream starts
+    const delay = Math.min(90000, Math.max(15000, Math.round(blob.size / 10485)));
+    setTimeout(() => URL.revokeObjectURL(url), delay);
 }
 
 // Keep the old exportZip name working (called from orgAction 'exportZip')
@@ -3260,9 +3452,11 @@ class DuplicateDetector {
 
     static async _byHash(files, onP, token) {
         const hashes = new Map(), dupes = new Map();
+        const HASH_LIMIT = 200 * 1024 * 1024; // skip SHA-256 for files > 200 MB — would OOM
         for (let i = 0; i < files.length; i++) {
             if (token.cancelled) return null;
             const f = files[i];
+            if (f.size > HASH_LIMIT) { onP(i+1, files.length); continue; } // skip large files
             try {
                 const buf = await f._file.arrayBuffer();
                 const h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)))
@@ -3925,16 +4119,23 @@ async function verifyIntegrity() {
     const files = state.files.filter(f=>f._file).slice(0, 10);
     if (!files.length) { showToast('No files to verify'); return; }
     showToast('Verifying file integrity…');
-    const results = await Promise.all(files.map(async f => {
+    const HASH_LIMIT = 200 * 1024 * 1024;
+    // Sequential — not parallel — to avoid loading multiple large files into memory at once
+    const results = [];
+    for (const f of files) {
+        if (f.size > HASH_LIMIT) {
+            results.push({ name: f.name, size: f.size, hash: 'skipped (>200 MB)', ok: true });
+            continue;
+        }
         try {
             const buf = await f._file.arrayBuffer();
             const h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)))
                 .map(b=>b.toString(16).padStart(2,'0')).join('');
-            return { name: f.name, size: f.size, hash: h.slice(0,16)+'…', ok: true };
+            results.push({ name: f.name, size: f.size, hash: h.slice(0,16)+'…', ok: true });
         } catch(e) {
-            return { name: f.name, size: f.size, hash: 'error', ok: false };
+            results.push({ name: f.name, size: f.size, hash: 'error', ok: false });
         }
-    }));
+    }
     const main = document.getElementById('mainArea');
     state.currentFolder = '__storage__';
     document.getElementById('topbarTitle').textContent = 'Integrity Check';
