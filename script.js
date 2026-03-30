@@ -3688,7 +3688,7 @@ function showOrganizerMenu() {
 
     const SECTIONS = [
         { id:'rename',  icon:'✏️', title:'Auto-Rename',   items:[
-            { label:'Rename to Date (YYYY-MM-DD)',    fn:'renameToDate' },
+            { label:'Rename to Date (YYYY-MM-DD_HH-MM AM/PM)',    fn:'renameToDate' },
             { label:'Rename to Timestamp',            fn:'renameToTimestamp' },
             { label:'Rename to Sequence (file_001)', fn:'renameToSequence' },
             { label:'Lowercase filenames',           fn:'renameLowercase' },
@@ -3697,7 +3697,7 @@ function showOrganizerMenu() {
         ]},
         { id:'organize', icon:'📁', title:'Auto-Organize', items:[
             { label:'Organize by file type',        fn:'organizeByType' },
-            { label:'Organize by date (YYYY-MM)',   fn:'organizeByDate' },
+            { label:'Organize by date (YYYY-MM-DD_HH-MM-SS)',   fn:'organizeByDate' },
             { label:'Organize by size range',       fn:'organizeBySizeRange' },
             { label:'Organize by first letter A–Z', fn:'organizeByFirstLetter' },
         ]},
@@ -3756,7 +3756,13 @@ function _getActionTargets() {
 
 function renameToDate() {
     const files = _getActionTargets(); if (!files.length) { showToast('No files to rename'); return; }
-    files.forEach(f => { const d = new Date(f.lastModified); const ds = d.toISOString().split('T')[0]; f.name = ds + (f.ext ? '.'+f.ext : ''); });
+    files.forEach(f => {
+        const d = new Date(f.lastModified);
+        const pad = v => String(v).padStart(2,'0');
+        const h = d.getHours(); const ampm = h >= 12 ? 'PM' : 'AM'; const h12 = pad(h % 12 || 12);
+        const ds = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${h12}-${pad(d.getMinutes())}${ampm}`;
+        f.name = ds + (f.ext ? '.'+f.ext : '');
+    });
     renderCurrentFolder(); showToast(`Renamed ${files.length} files to date`);
 }
 
@@ -3846,13 +3852,18 @@ function organizeByType() {
 function organizeByDate() {
     let n = 0;
     state.files.filter(f=>f.folder==='queue').forEach(f => {
-        const d = new Date(f.lastModified);
-        const folder = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        let folder;
+        if (!f.lastModified) {
+            folder = 'unknown-date';
+        } else {
+            const d = new Date(f.lastModified);
+            const pad = v => String(v).padStart(2,'0');
+            folder = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+        }
         _moveToFolder(f.id, folder); n++;
     });
-    updateCounts(); renderCurrentFolder(); showToast(`Organized ${n} files by date`);
+    updateCounts(); renderCurrentFolder(); showToast(`Organized ${n} files by date & time`);
 }
-
 function organizeBySizeRange() {
     let n = 0;
     state.files.filter(f=>f.folder==='queue').forEach(f => {
