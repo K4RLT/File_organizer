@@ -499,15 +499,15 @@ function renderHomePanel() {
                     <rect x="28" y="28" width="20" height="20" rx="5" fill="var(--accent)" opacity="0.25"/>
                 </svg>
             </div>
-            <h2 style="margin-top:18px;margin-bottom:6px;">File Organizer</h2>
-            <p style="margin-bottom:4px;opacity:0.55;font-size:13px;">Sort, review, and clean up your files.</p>
-            <p style="margin-bottom:28px;opacity:0.35;font-size:12px;">Made with patience by Karl</p>
-            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-                <button class="load-btn" style="min-width:130px;" onclick="loadFiles(false)">
+            <h2>File Organizer</h2>
+            <p class="home-tagline">Sort, review, and clean up your files.</p>
+            <p class="home-credit">Made with patience by Karl</p>
+            <div class="home-cta-row">
+                <button class="load-btn" onclick="loadFiles(false)">
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 3.5h10M2 6.5h6M2 9.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
                     Select Files
                 </button>
-                <button class="load-btn load-btn-secondary" style="min-width:130px;" onclick="loadFiles(true)">
+                <button class="load-btn load-btn-secondary" onclick="loadFiles(true)">
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 4.5h12M3 4.5V3a1 1 0 011-1h2l1.5 1.5H10a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     Select Folder
                 </button>
@@ -700,7 +700,7 @@ function buildFileDetails(file) {
         file.ext ? { k:'Ext', v: '.' + file.ext.toUpperCase() } : null,
         file.type ? { k:'Type', v: file.type } : null,
         d ? { k:'Date', v: d.toLocaleDateString() } : null,
-        d ? { k:'Time', v: d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) } : null,
+        d ? { k:'Time', v: d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:false}) } : null,
         ARCHIVE_TYPES[file.ext] ? { k:'Format', v: ARCHIVE_TYPES[file.ext], fw: true } : null,
     ].filter(Boolean);
 
@@ -2243,7 +2243,7 @@ function renderLightbox() {
     const counter = (lightboxIndex >= 0 && lightboxIndex < total && total > 1)
         ? `${lightboxIndex + 1} / ${total}` : '';
     document.getElementById('lightboxName').innerHTML =
-        `<span class="lb-counter">${escHtml(counter)}</span><span class="lb-filename">${escHtml(file.name)}</span><span class="lb-meta">${formatSize(file.size)}${d ? '  ·  ' + d.toLocaleString() : ''}</span>`;
+        `<span class="lb-counter">${escHtml(counter)}</span><span class="lb-filename">${escHtml(file.name)}</span><span class="lb-meta">${formatSize(file.size)}${d ? '  ·  ' + d.toLocaleString([], {hour12:false}) : ''}</span>`;
 
     // Update nav button visibility
     const prevBtn = document.getElementById('lbPrevBtn');
@@ -3882,7 +3882,7 @@ function showOrganizerMenu() {
 
     const SECTIONS = [
         { id:'rename',  icon:'✏️', title:'Auto-Rename',   items:[
-            { label:'Rename to Date (YYYY-MM-DD_HH-MM AM/PM)',    fn:'renameToDate' },
+            { label:'Rename to Date (YYYY-MM-DD_HH-MM)',           fn:'renameToDate' },
             { label:'Rename to Timestamp',            fn:'renameToTimestamp' },
             { label:'Rename to Sequence (file_001)', fn:'renameToSequence' },
             { label:'Lowercase filenames',           fn:'renameLowercase' },
@@ -3954,8 +3954,7 @@ function renameToDate() {
     files.forEach(f => {
         const d = new Date(f.lastModified);
         const pad = v => String(v).padStart(2,'0');
-        const h = d.getHours(); const ampm = h >= 12 ? 'PM' : 'AM'; const h12 = pad(h % 12 || 12);
-        const ds = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${h12}-${pad(d.getMinutes())}${ampm}`;
+        const ds = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
         const ext = f.ext ? '.'+f.ext : '';
         const base = ds + ext;
         const count = seen.get(base) || 0;
